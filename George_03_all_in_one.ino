@@ -2,12 +2,12 @@
    this fileis intended to get data fromMPU and then drive effcently stepmotors
    for self balancing robot.
 
-   idea: 
+   idea:
     read the MPU
     calc the PID output as speed
     change speed to impulse delay for motors
    --> in timer based int every 20us - makepropperly spaced apart motor impulses
-   
+
    MPU idea based on:
    Arduino and MPU6050 Accelerometer and Gyroscope Sensor Tutorial
    by Dejan, https://howtomechatronics.com
@@ -29,9 +29,9 @@ int c = 0;
 //============ stuff for PID ===========
 //based on: https://wired.chillibasket.com/2015/03/pid-controller/
 //
-float Kp = 1;          // (P)roportional Tuning Parameter
+float Kp = 0.7;          // (P)roportional Tuning Parameter
 float Ki = 0.0;          // (I)ntegral Tuning Parameter
-float Kd = 0;          // (D)erivative Tuning Parameter
+float Kd = 0.01;          // (D)erivative Tuning Parameter
 float iTerm = 0;       // Used to accumulate error (integral)
 float lastTime = 0;    // Records the last time function was called
 float maxPID = 10000;    // The maximum value that can be output
@@ -49,16 +49,23 @@ const int maxAngle = 20; // we stops motors if toomuch of roll.
 // parametry fizyczne
 const int freq = 16.0; //[MHz]
 const int steps_per_rev = 200;
-const float k = 2 * 3.1415 / steps_per_rev; 
+const float k = 2 * 3.1415 / steps_per_rev;
 const float wheel_D_mm = 90.0; // [mm]
 const float R = wheel_D_mm / 2; //[mm]
-const int T0_delay_counter = 39; 
+const int T0_delay_counter = 39;
 const int T0 = (T0_delay_counter + 1) / (freq / 8);
 
 // for steppers
 
 unsigned long globaldel =  65536000;
-int throttle_counter_left_motor, throttle_counter_right_motor;
+int throttle_counter_left_motor = 2; 
+int throttle_counter_right_motor = 2;
+int left_motor_pulse, right_motor_pulse;
+
+bool dir = true;
+bool prev_dir = false;
+
+bool first_run = true;
 
 void setup() {
   Serial.begin(19200);
@@ -80,9 +87,9 @@ void setup() {
     Wire.endTransmission(true);
     delay(20);
   */
-  // Call this function if you need to get the IMU error values for your module
+//   Call this function if you need to get the IMU error values for your module
   //calculate_IMU_error();
-  //delay(10);
+  //delay(10000);
 
   //========== TymancjO ============
   //To create a variable pulse for controlling the stepper motors a timer is created that will execute a piece of code (subroutine) every 20us
@@ -95,10 +102,15 @@ void setup() {
   TCCR2A |= (1 << WGM21);                                                   //Set counter 2 to CTC (clear timer on compare) mode
 
   // preparing the pins for steppers
-  pinMode(6,OUTPUT);
-  pinMode(7,OUTPUT);
-  pinMode(8,OUTPUT);
-  pinMode(9,OUTPUT);
+  pinMode(6, OUTPUT);
+  pinMode(7, OUTPUT);
+  pinMode(8, OUTPUT);
+  pinMode(9, OUTPUT);
+
+  // initial direction
+  // front
+        PORTD &= 0b01111111;
+        PORTB |= 0b00000010;
 
   Serial.println("starting...");
 
@@ -116,8 +128,8 @@ void loop() {
   AccY = (Wire.read() << 8 | Wire.read()) / 16384.0; // Y-axis value
   AccZ = (Wire.read() << 8 | Wire.read()) / 16384.0; // Z-axis value
   // Calculating Roll and Pitch from the accelerometer data
-  accAngleX = (atan(AccY / sqrt(pow(AccX, 2) + pow(AccZ, 2))) * 180 / PI) - 0.58; // AccErrorX ~(0.58) See the calculate_IMU_error()custom function for more details
-  accAngleY = (atan(-1 * AccX / sqrt(pow(AccY, 2) + pow(AccZ, 2))) * 180 / PI) + 1.58; // AccErrorY ~(-1.58)
+  accAngleX = (atan(AccY / sqrt(pow(AccX, 2) + pow(AccZ, 2))) * 180 / PI) + 5.6; // AccErrorX ~(0.58) See the calculate_IMU_error()custom function for more details
+  accAngleY = (atan(-1 * AccX / sqrt(pow(AccY, 2) + pow(AccZ, 2))) * 180 / PI) - 3.68; // AccErrorY ~(-1.58)
 
   // === Read gyroscope data === //
   previousTime = currentTime;        // Previous time is stored before the actual time read
@@ -132,8 +144,8 @@ void loop() {
   GyroZ = (Wire.read() << 8 | Wire.read()) / 131.0;
   // Correct the outputs with the calculated error values
   GyroX = GyroX - 67.94; // GyroErrorX
-  GyroY = GyroY + 0.09; // GyroErrorY
-  GyroZ = GyroZ + 0.39; // GyroErrorZ
+  GyroY = GyroY + 0.00; // GyroErrorY
+  GyroZ = GyroZ + 0.50; // GyroErrorZ
 
   // Currently the raw values are in degrees per seconds, deg/s, so we need to multiply by sendonds (s) to get the angle in degrees
   gyroAngleX = gyroAngleX + GyroX * elapsedTime; // deg/s * s = deg
@@ -141,8 +153,8 @@ void loop() {
   yaw =  yaw + GyroZ * elapsedTime;
 
   // Complementary filter - combine acceleromter and gyro angle values
-  roll = 0.90 * gyroAngleX + 0.1 * accAngleX;
-  pitch = 0.90 * gyroAngleY + 0.1 * accAngleY;
+  roll = 0.8 * gyroAngleX + 0.2 * accAngleX;
+  pitch = 0.99 * gyroAngleY + 0.01 * accAngleY;
 
 
   // doing the PID
@@ -152,18 +164,40 @@ void loop() {
   if ((pitch < target - delta) || (pitch > target + delta) && abs(pitch < maxAngle)) {
     // this sets the global variable used by int subroutine
     globaldel = time_from_speed(pid_output);
+
+    prev_dir= dir;
+    dir = !(pid_output < 0);
+    
+    if ( dir != prev_dir || first_run ) {
+      //clearing 1st run flag
+      first_run = false;
+      
+      // we need to change direction
+      if (!dir){
+        // front
+        PORTD &= 0b01111111;
+        PORTB |= 0b00000010;
+        
+        }
+        else{
+        // back
+        PORTD |= 0b10000000;
+        PORTB &= 0b11111101;
+        }
+        }
+       
   }
 
-// Print the values on the serial monitor
-//  Serial.print(roll);
-//  Serial.print("/");
-//  Serial.print(pitch);
-//  Serial.print("/");
-//  Serial.print(yaw);
-//  Serial.print("/PID: ");
-//  Serial.print(pid_output);
-//  Serial.print(":::");
-//  Serial.println(globaldel);
+  // Print the values on the serial monitor
+  //  Serial.print(roll);
+  //  Serial.print("/");
+//    Serial.println(pitch);
+  //  Serial.print("/");
+  //  Serial.print(yaw);
+  //  Serial.print("/PID: ");
+  //  Serial.print(pid_output);
+  //  Serial.print(":::");
+  //  Serial.println(globaldel);
 
 
   //  delay(100);
@@ -224,15 +258,15 @@ void calculate_IMU_error() {
 }
 
 
-int time_from_speed( float V ){
+int time_from_speed( float V ) {
   // this function recalculate the required delay time for impulsed for given speed
 
-  float delayTime = ((k * R*1e-3) / abs(V))*1e6 - T0;
+  float delayTime = ((k * R * 1e-3) / abs(V)) * 1e6 - T0;
   int delayLoops = 2 + 2 + (int) delayTime / T0;
-//  if (delayLoops < 2) delayLoops = 2;
-    
+  //  if (delayLoops < 2) delayLoops = 2;
+
   return delayLoops; // retrning number of delayloops
-  } 
+}
 
 
 /**
@@ -273,27 +307,29 @@ float pid(float target, float current) {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //Interrupt routine  TIMER2_COMPA_vect
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-ISR(TIMER2_COMPA_vect){
+ISR(TIMER2_COMPA_vect) {
   //Left motor pulse calculations
   throttle_counter_left_motor ++;                                           //Increase the throttle_counter_left_motor variable by 1 every time this routine is executed
-  
-  if(throttle_counter_left_motor > globaldel){             //If the number of loops is larger then the throttle_left_motor_memory variable
+
+  if (throttle_counter_left_motor > left_motor_pulse) {           //If the number of loops is larger then the throttle_left_motor_memory variable
     throttle_counter_left_motor = 0;                                        //Reset the throttle_counter_left_motor variable
+    left_motor_pulse = globaldel;
   }
-  else if(throttle_counter_left_motor == 1)PORTD |= 0b01000000;             //Set output 2 high to create a pulse for the stepper controller
-  else if(throttle_counter_left_motor == 2)PORTD &= 0b10111111;             //Set output 2 low because the pulse only has to last for 20us 
- 
+  else if (throttle_counter_left_motor == 1)PORTD |= 0b01000000;            //Set output 2 high to create a pulse for the stepper controller
+  else if (throttle_counter_left_motor == 2)PORTD &= 0b10111111;            //Set output 2 low because the pulse only has to last for 20us
+
   //right motor pulse calculations
   throttle_counter_right_motor ++;                                          //Increase the throttle_counter_right_motor variable by 1 every time the routine is executed
-  if(throttle_counter_right_motor > globaldel){           //If the number of loops is larger then the throttle_right_motor_memory variable
+  if (throttle_counter_right_motor > right_motor_pulse) {         //If the number of loops is larger then the throttle_right_motor_memory variable
     throttle_counter_right_motor = 0;                                       //Reset the throttle_counter_right_motor variable
-//    throttle_right_motor_memory = throttle_right_motor;                     //Load the next throttle_right_motor variable
-//    if(throttle_right_motor_memory < 0){                                    //If the throttle_right_motor_memory is negative
-//      PORTD |= 0b00100000;                                                  //Set output 5 low to reverse the direction of the stepper controller
-//      throttle_right_motor_memory *= -1;                                    //Invert the throttle_right_motor_memory variable
-//    }
-//    else PORTD &= 0b11011111;                                               //Set output 5 high for a forward direction of the stepper motor
+    right_motor_pulse = globaldel;
+    //    throttle_right_motor_memory = throttle_right_motor;                     //Load the next throttle_right_motor variable
+    //    if(throttle_right_motor_memory < 0){                                    //If the throttle_right_motor_memory is negative
+    //      PORTD |= 0b00100000;                                                  //Set output 5 low to reverse the direction of the stepper controller
+    //      throttle_right_motor_memory *= -1;                                    //Invert the throttle_right_motor_memory variable
+    //    }
+    //    else PORTD &= 0b11011111;                                               //Set output 5 high for a forward direction of the stepper motor
   }
-  else if(throttle_counter_right_motor == 1)PORTB |= 0b00000001;            //Set output 4 high to create a pulse for the stepper controller
-  else if(throttle_counter_right_motor == 2)PORTB &= 0b11111110;            //Set output 4 low because the pulse only has to last for 20us
+  else if (throttle_counter_right_motor == 1)PORTB |= 0b00000001;           //Set output 4 high to create a pulse for the stepper controller
+  else if (throttle_counter_right_motor == 2)PORTB &= 0b11111110;           //Set output 4 low because the pulse only has to last for 20us
 }
