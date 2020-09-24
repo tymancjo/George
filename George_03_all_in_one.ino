@@ -56,7 +56,9 @@ const int T0_delay_counter = 39;
 const int T0 = (T0_delay_counter + 1) / (freq / 8);
 
 // for steppers
-int globaldel, throttle_counter_left_motor, throttle_counter_right_motor;
+
+unsigned long globaldel =  65536000;
+int throttle_counter_left_motor, throttle_counter_right_motor;
 
 void setup() {
   Serial.begin(19200);
@@ -158,10 +160,10 @@ void loop() {
 //  Serial.print(pitch);
 //  Serial.print("/");
 //  Serial.print(yaw);
-  Serial.print("/PID: ");
-  Serial.print(pid_output);
-  Serial.print(":::");
-  Serial.println(globaldel);
+//  Serial.print("/PID: ");
+//  Serial.print(pid_output);
+//  Serial.print(":::");
+//  Serial.println(globaldel);
 
 
   //  delay(100);
